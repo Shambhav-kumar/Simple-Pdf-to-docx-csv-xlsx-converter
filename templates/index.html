@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Converter</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <h1>PDF Converter</h1>
+        
+        <!-- File Upload Area -->
+        <div class="upload-area" id="uploadArea">
+            <input type="file" id="fileInput" accept=".pdf">
+            <p>Select PDF file</p>
+        </div>
+
+        <!-- Input PDF Preview (Top Section) -->
+        <div class="preview-container" id="inputPreviewContainer" style="display:none">
+            <h3>Input PDF Preview</h3>
+            <div class="pdf-viewer">
+                <canvas id="pdfCanvas"></canvas>
+            </div>
+            <div class="preview-controls">
+                <button id="prevPage">Previous</button>
+                <span id="pageInfo">Page 1 of 1</span>
+                <button id="nextPage">Next</button>
+                <button id="zoomIn">+</button>
+                <button id="zoomOut">-</button>
+                <span id="zoomLevel">100%</span>
+                <button id="fitWidth">Fit Width</button>
+            </div>
+        </div>
+
+        <!-- Conversion Buttons (Middle Section) -->
+        <div class="format-options">
+            <button class="format-btn" data-format="docx">DOCX</button>
+            <button class="format-btn" data-format="csv">CSV</button>
+            <button class="format-btn" data-format="xlsx">XLSX</button>
+        </div>
+        
+        <button id="convertBtn" disabled>Convert</button>
+        <div id="status"></div>
+
+        <!-- Output Preview (Bottom Section) -->
+        <div class="preview-container" id="outputPreviewContainer" style="display:none">
+            <h3 id="outputPreviewTitle">Output Preview</h3>
+            <div class="output-viewer" id="outputViewer"></div>
+            <div class="preview-controls">
+                <button id="outputZoomIn">+</button>
+                <button id="outputZoomOut">-</button>
+                <span id="outputZoomLevel">100%</span>
+                <button id="outputFitWidth">Fit Width</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.11.338/pdf.worker.min.js';
+
+        document.addEventListener('DOMContentLoaded', function() {
+            // DOM elements
+            const uploadArea = document.getElementById('uploadArea');
+            const fileInput = document.getElementById('fileInput');
+            const formatBtns = document.querySelectorAll('.format-btn');
+            const convertBtn = document.getElementById('convertBtn');
+            const statusDiv = document.getElementById('status');
+            const inputPreview = document.getElementById('inputPreviewContainer');
+            const outputPreview = document.getElementById('outputPreviewContainer');
+            const outputViewer = document.getElementById('outputViewer');
+            const outputTitle = document.getElementById('outputPreviewTitle');
+            const pdfCanvas = document.getElementById('pdfCanvas');
+            
+            // Input preview controls
+            const prevPageBtn = document.getElementById('prevPage');
+            const nextPageBtn = document.getElementById('nextPage');
+            const zoomInBtn = document.getElementById('zoomIn');
+            const zoomOutBtn = document.getElementById('zoomOut');
+            const fitWidthBtn = document.getElementById('fitWidth');
+            const pageInfo = document.getElementById('pageInfo');
+            const zoomLevel = document.getElementById('zoomLevel');
+            
+            // Output preview controls
+            const outputZoomInBtn = document.getElementById('outputZoomIn');
+            const outputZoomOutBtn = document.getElementById('outputZoomOut');
+            const outputFitWidthBtn = document.getElementById('outputFitWidth');
+            const outputZoomLevel = document.getElementById('outputZoomLevel');
+            
+            // Variables
+            let selectedFile = null;
+            let selectedFormat = null;
+            let pdfDoc = null;
+            let currentPage = 1;
+            let currentScale = 1.0;
+            let outputCurrentScale = 1.0;
+            const ctx = pdfCanvas.getContext('2d');
+            
+            // Event Listeners
+            uploadArea.addEventListener('click', () => fileInput.click());
+
+            fileInput.addEventListener('click', (e) => {
+                e.stopPropagation(); 
+            });
+
+            
+            fileInput.addEventListener('change', async (e) => {
+                selectedFile = e.target.files[0];
+                uploadArea.querySelector('p').textContent = selectedFile.name;
+                updateConvertButton();
+                
+                // Show input preview
+                inputPreview.style.display = 'block';
+                outputPreview.style.display = 'none';
+                
+                // Load PDF for preview
+                const fileReader = new FileReader();
+                fileReader.onload = async function() {
+                    const typedarray = new Uint8Array(this.result);
+                    try {
+                        pdfDoc = await pdfjsLib.getDocument(typedarray).promise;
+                        currentPage = 1;
+                        currentScale = 1.0;
+                        renderPage();
+                    } catch (error) {
+                        console.error('PDF preview error:', error);
+                        statusDiv.textContent = 'Could not preview PDF';
+                    }
+                };
+                fileReader.readAsArrayBuffer(selectedFile);
+            });
+            
+            formatBtns.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    formatBtns.forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    selectedFormat = btn.dataset.format;
+                    updateConvertButton();
+                });
+            });
+            
+            // Input Preview Controls
+            prevPageBtn.addEventListener('click', () => {
+                if (pdfDoc && currentPage > 1) {
+                    currentPage--;
+                    renderPage();
+                }
+            });
+            
+            nextPageBtn.addEventListener('click', () => {
+                if (pdfDoc && currentPage < pdfDoc.numPages) {
+                    currentPage++;
+                    renderPage();
+                }
+            });
+            
+            zoomInBtn.addEventListener('click', () => {
+                currentScale += 0.25;
+                renderPage();
+            });
+            
+            zoomOutBtn.addEventListener('click', () => {
+                if (currentScale > 0.5) {
+                    currentScale -= 0.25;
+                    renderPage();
+                }
+            });
+            
+            fitWidthBtn.addEventListener('click', () => {
+                if (pdfDoc) {
+                    const containerWidth = document.querySelector('.pdf-viewer').clientWidth;
+                    pdfDoc.getPage(currentPage).then(page => {
+                        const viewport = page.getViewport({ scale: 1.0 });
+                        currentScale = (containerWidth - 40) / viewport.width;
+                        renderPage();
+                    });
+                }
+            });
+            
+            // Output Preview Controls
+            outputZoomInBtn.addEventListener('click', () => {
+                outputCurrentScale += 0.1;
+                updateOutputView();
+            });
+            
+            outputZoomOutBtn.addEventListener('click', () => {
+                if (outputCurrentScale > 0.5) {
+                    outputCurrentScale -= 0.1;
+                    updateOutputView();
+                }
+            });
+            
+            outputFitWidthBtn.addEventListener('click', () => {
+                const container = outputViewer;
+                const content = outputViewer.firstElementChild;
+                if (content) {
+                    const scale = container.clientWidth / content.scrollWidth;
+                    outputCurrentScale = Math.min(scale, 1.5); // Limit max scale
+                    updateOutputView();
+                }
+            });
+            
+            // Convert Button
+            convertBtn.addEventListener('click', async () => {
+                if (!selectedFile || !selectedFormat) return;
+                
+                convertBtn.disabled = true;
+                statusDiv.textContent = 'Converting...';
+                
+                try {
+                    const formData = new FormData();
+                    formData.append('file', selectedFile);
+                    formData.append('format', selectedFormat);
+                    
+                    const response = await fetch('/convert', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    const result = await response.json();
+                    
+                    if (!response.ok) {
+                        throw new Error(result.error || 'Conversion failed');
+                    }
+                    
+                    statusDiv.innerHTML = `
+                        Conversion successful! 
+                        <a href="${result.download_url}" download>Download ${result.filename}</a>
+                    `;
+                    
+                    // Show output preview
+                    outputTitle.textContent = `Output ${result.format.toUpperCase()} Preview`;
+                    outputPreview.style.display = 'block';
+                    outputCurrentScale = 1.0;
+                    
+                    // Load output preview
+                    const previewResponse = await fetch(result.preview_url);
+                    outputViewer.innerHTML = await previewResponse.text();
+                    
+                    // Style tables if present
+                    const tables = outputViewer.querySelectorAll('table');
+                    tables.forEach(table => {
+                        table.classList.add('preview-table');
+                    });
+                    
+                    // Reset output controls
+                    outputZoomLevel.textContent = '100%';
+                    updateOutputView();
+                    
+                } catch (error) {
+                    statusDiv.textContent = error.message;
+                } finally {
+                    convertBtn.disabled = false;
+                }
+            });
+            
+            // Functions
+            async function renderPage() {
+                if (!pdfDoc) return;
+                
+                const page = await pdfDoc.getPage(currentPage);
+                const viewport = page.getViewport({ scale: currentScale });
+                
+                pdfCanvas.height = viewport.height;
+                pdfCanvas.width = viewport.width;
+                
+                await page.render({
+                    canvasContext: ctx,
+                    viewport: viewport
+                }).promise;
+                
+                pageInfo.textContent = `Page ${currentPage} of ${pdfDoc.numPages}`;
+                zoomLevel.textContent = `${Math.round(currentScale * 100)}%`;
+            }
+            
+            function updateOutputView() {
+                const content = outputViewer.firstElementChild;
+                if (content) {
+                    content.style.transform = `scale(${outputCurrentScale})`;
+                    content.style.transformOrigin = '0 0';
+                    outputZoomLevel.textContent = `${Math.round(outputCurrentScale * 100)}%`;
+                }
+            }
+            
+            function updateConvertButton() {
+                convertBtn.disabled = !(selectedFile && selectedFormat);
+            }
+        });
+    </script>
+</body>
+</html>
